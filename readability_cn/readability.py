@@ -498,13 +498,91 @@ class ChineseReadability:
         return readability_three, readability_seven
     
     ## 郭望皓对外汉语难度指标 = -11.946 + 0.198 * 汉字难度 + 0.123 * 平均句长 + 0.811 * 词汇难度
-    ## 《汉语水平词汇与汉字等级大纲》的甲、乙、丙、丁、超纲字/词数占比；文中加权词汇难度的相关度近似于甲级词占比
+    ## 《汉语水平词汇与汉字等级大纲》的甲、乙、丙、丁、超纲字/词数占比
     ## 汉字难度 = 0.148A + 0.182B + 0.137C + 0.215D + 0.283E
     ## 词汇难度 = 0.132A + 0.185B + 0.249C + 0.246D + 0.188E
-    ## 找不到具体的分级表，暂不实现
-    def guowanghao_readability(self, text):
-        pass
-    
+    def guowanghao_readability(self, sentences):
+        # Lazy-load level wordlists for 乙/丙/丁
+        if not hasattr(self, 'yi_words'):
+            with open(os.path.join(os.path.dirname(__file__), 'data/ci_yi.txt'), 'r', encoding='utf-8') as f:
+                self.yi_words = set(f.read().splitlines())
+        if not hasattr(self, 'bing_words'):
+            with open(os.path.join(os.path.dirname(__file__), 'data/ci_bing.txt'), 'r', encoding='utf-8') as f:
+                self.bing_words = set(f.read().splitlines())
+        if not hasattr(self, 'ding_words'):
+            with open(os.path.join(os.path.dirname(__file__), 'data/ci_ding.txt'), 'r', encoding='utf-8') as f:
+                self.ding_words = set(f.read().splitlines())
+
+        # 分句由调用方提供
+        total_sentences = len(sentences)
+
+        # 统计词级别占比
+        total_words = 0
+        word_counts = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'E': 0}
+
+        # 统计字级别占比（仅统计中文汉字）
+        total_chars = 0
+        char_counts = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'E': 0}
+
+        for sent in sentences:
+            # 分词
+            output = self.ltp.pipeline(sent, tasks=["cws"])
+            words = output.cws
+            total_words += len(words)
+
+            # 词汇分级：甲/乙/丙/丁/超纲
+            for w in words:
+                if w in self.jia_words:
+                    word_counts['A'] += 1
+                elif w in self.yi_words:
+                    word_counts['B'] += 1
+                elif w in self.bing_words:
+                    word_counts['C'] += 1
+                elif w in self.ding_words:
+                    word_counts['D'] += 1
+                else:
+                    word_counts['E'] += 1
+
+            # 汉字分级：优先按甲级汉字表；否则按单字出现在甲/乙/丙/丁词表中推断；都不在则为超纲
+            for ch in sent:
+                if ch in self.stroke_counts:  # 过滤非汉字及标点
+                    total_chars += 1
+                    if ch in self.jia_chars or ch in self.jia_words:
+                        char_counts['A'] += 1
+                    elif ch in self.yi_words:
+                        char_counts['B'] += 1
+                    elif ch in self.bing_words:
+                        char_counts['C'] += 1
+                    elif ch in self.ding_words:
+                        char_counts['D'] += 1
+                    else:
+                        char_counts['E'] += 1
+
+        # 各级占比
+        def ratios(counts, total):
+            if total == 0:
+                return 0, 0, 0, 0, 0
+            A = counts['A'] / total
+            B = counts['B'] / total
+            C = counts['C'] / total
+            D = counts['D'] / total
+            E = counts['E'] / total
+            return A, B, C, D, E
+
+        A_c, B_c, C_c, D_c, E_c = ratios(char_counts, total_chars)
+        A_w, B_w, C_w, D_w, E_w = ratios(word_counts, total_words)
+
+        # 汉字难度 & 词汇难度
+        char_difficulty = 0.148 * A_c + 0.182 * B_c + 0.137 * C_c + 0.215 * D_c + 0.283 * E_c
+        vocab_difficulty = 0.132 * A_w + 0.185 * B_w + 0.249 * C_w + 0.246 * D_w + 0.188 * E_w
+
+        # 平均句长（句均字数）
+        avg_sentence_length = (total_chars / total_sentences) if total_sentences > 0 else 0
+        
+        # 郭望皓对外汉语难度指标
+        readability = -11.946 + 0.198 * char_difficulty + 0.123 * avg_sentence_length + 0.811 * vocab_difficulty
+        return readability
+
     ## 左虹欧美留学生难度指标 =  23.646 + 0.485 * 汉字水平大纲常用甲级字数 - 125.931 * 非甲乙级词数占比 - 0.647 * 虚词(介词、连词、助词、叹词、副词、方位词)数
     ## 杨金余高级汉语精读教材研究中指出：平均每百字的难字为 3-7 个，平均每百字的难词为 10-20 个，平均每百字的固定成语词组数不超过 2 个，平均每百字的丙级以上句法项目不超过 1 个。全文 1000-3000 字，平均每句 20-40 字。
     ## 左虹研究中每篇文章的平均长度是 145 个汉字，和杨金余研究有明显差异。因此请区分测试内容的长短差异，选用不同的指标。
@@ -580,6 +658,16 @@ class ChineseReadability:
         old_chengyong = self.chengyong_readability(old_sentences)
         new_chengyong = self.chengyong_readability(new_sentences)
         self._compare_scores(old_chengyong, new_chengyong, "程勇", True)
+
+        # 郭望皓可读性指标
+        old_guowanghao = self.guowanghao_readability(old_sentences)
+        new_guowanghao = self.guowanghao_readability(new_sentences)
+        self._compare_scores(old_guowanghao, new_guowanghao, "郭望皓", False)
+
+        # 王蕾可读性指标
+        old_wanglei = self.wanglei_readability(old_sentences)
+        new_wanglei = self.wanglei_readability(new_sentences)
+        self._compare_scores(old_wanglei, new_wanglei, "王蕾", False)
 
         # 左虹可读性指标
         old_zuohong = self.zuohong_readability(old_sentences)

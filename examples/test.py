@@ -1,5 +1,7 @@
-from readability_cn import ChineseReadability
+import sys
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from readability_cn import ChineseReadability
 
 readability = ChineseReadability()
 # add new custom words
