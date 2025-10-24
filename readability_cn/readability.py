@@ -507,13 +507,13 @@ class ChineseReadability:
     
     ## 左虹欧美留学生难度指标 =  23.646 + 0.485 * 汉字水平大纲常用甲级字数 - 125.931 * 非甲乙级词数占比 - 0.647 * 虚词(介词、连词、助词、叹词、副词、方位词)数
     ## 杨金余高级汉语精读教材研究中指出：平均每百字的难字为 3-7 个，平均每百字的难词为 10-20 个，平均每百字的固定成语词组数不超过 2 个，平均每百字的丙级以上句法项目不超过 1 个。全文 1000-3000 字，平均每句 20-40 字。
-    ## 则估算的取值范围: [170， 1400]，太离谱了。所以决定参照王蕾指标的算法，将甲级字数和虚词数改成去重值。
+    ## 左虹研究中每篇文章的平均长度是 145 个汉字，和杨金余研究有明显差异。因此请区分测试内容的长短差异，选用不同的指标。
     def zuohong_readability(self, sentences):
         total_chars = 0
-        unique_jia_chars = set()
+        jia_chars_count = 0
         total_words = 0
         non_jia_words_count = 0
-        unique_function_words = set()
+        function_words_count = 0
     
         for sent in sentences:
             # Process each sentence
@@ -521,26 +521,21 @@ class ChineseReadability:
             words = output.cws
             pos_tags = output.pos
     
-            # Count characters and unique Jia-level characters
+            # Count characters and Jia-level character occurrences
             for char in sent:
                 total_chars += 1
                 if char in self.jia_chars:
-                    unique_jia_chars.add(char)
+                    jia_chars_count += 1
     
-            # Count words, non-Jia words, and unique function words
+            # Count words, non-Jia words, and function word occurrences
             for word, pos in zip(words, pos_tags):
                 total_words += 1
                 if word not in self.jia_words:
                     non_jia_words_count += 1
                 if pos in ['c', 'p', 'u', 'd', 'e', 'nd']:  # Function word POS tags in LTP
-                    unique_function_words.add(word)
-    
-        # Calculate counts
-        jia_chars_count = len(unique_jia_chars)
-        function_words_count = len(unique_function_words)
+                    function_words_count += 1
     
         # Calculate ratios
-        jia_chars_ratio = jia_chars_count / total_chars if total_chars > 0 else 0
         non_jia_words_ratio = non_jia_words_count / total_words if total_words > 0 else 0
     
         # Calculate Zuohong readability index
