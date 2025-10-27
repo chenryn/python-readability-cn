@@ -362,7 +362,227 @@ class ChineseReadability:
                        0.012 * sentence_length_variance + 
                        20 * category_ratios['relation'])
         return readability
+
+    ## 程勇基于新标准的汉语二语文本阅读难度分级体系
+    ## - 公式： 难度 = (1/3) * Σ_{n=1..7} n * (r_char(n) + r_word(n) + r_grammar(n))
+    ## - 其中 r_*(n) 是第 n 级在该类别中的比例（各类别比例之和为 1）
+    ## 新标准即 GF0025，data/下分别存储了字、词、语法的 csv 文件
+    ## 一级1-1.4，二级1.4-1.75，三级1.75-2.0，四级2.0-2.3，五级2.3-2.55，六级2.55-2.7，七级2.7-7.0
+    def _load_gf0025_data(self):
+        """加载GF0025标准的汉字、词汇和语法数据"""
+        import os
+        import csv
+        import pandas as pd
+        from collections import defaultdict
+        
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        
+        # 加载汉字数据
+        char_file = os.path.join(data_dir, 'GF0025_汉字.csv')
+        char_levels = defaultdict(int)  # 默认为0级（未收录）
+        if os.path.exists(char_file):
+            with open(char_file, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                next(reader)  # 跳过表头
+                for row in reader:
+                    if len(row) >= 2:
+                        char = row[0].strip()
+                        level = row[1].strip()
+                        if level.startswith('一'):
+                            char_levels[char] = 1
+                        elif level.startswith('二'):
+                            char_levels[char] = 2
+                        elif level.startswith('三'):
+                            char_levels[char] = 3
+                        elif level.startswith('四'):
+                            char_levels[char] = 4
+                        elif level.startswith('五'):
+                            char_levels[char] = 5
+                        elif level.startswith('六'):
+                            char_levels[char] = 6
+                        elif level.startswith('高等'):
+                            char_levels[char] = 7
+        
+        # 加载词汇数据
+        word_file = os.path.join(data_dir, 'GF0025_词汇.csv')
+        word_levels = defaultdict(int)  # 默认为0级（未收录）
+        if os.path.exists(word_file):
+            with open(word_file, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                next(reader)  # 跳过表头
+                for row in reader:
+                    if len(row) >= 2:
+                        word = row[0].strip()
+                        level = row[1].strip()
+                        if level.startswith('一'):
+                            word_levels[word] = 1
+                        elif level.startswith('二'):
+                            word_levels[word] = 2
+                        elif level.startswith('三'):
+                            word_levels[word] = 3
+                        elif level.startswith('四'):
+                            word_levels[word] = 4
+                        elif level.startswith('五'):
+                            word_levels[word] = 5
+                        elif level.startswith('六'):
+                            word_levels[word] = 6
+                        elif level.startswith('高等'):
+                            word_levels[word] = 7
+        
+        # 加载语法数据
+        grammar_file = os.path.join(data_dir, 'GF0025_语法_with_regex.csv')
+        grammar_data = []
+        if os.path.exists(grammar_file):
+            try:
+                grammar_df = pd.read_csv(grammar_file)
+                # 提取级别、语法项目、类别、正则表达式
+                for _, row in grammar_df.iterrows():
+                    level_text = row['级别'] if '级别' in grammar_df.columns else None
+                    # 跳过正则表达式为空的行
+                    regex_text = row['正则表达式'] if '正则表达式' in grammar_df.columns else None
+                    if regex_text is None or (isinstance(regex_text, float) and pd.isna(regex_text)) or str(regex_text).strip() == '':
+                        continue
+
+                    level = 0
+                    if level_text:
+                        if str(level_text).startswith('一'):
+                            level = 1
+                        elif str(level_text).startswith('二'):
+                            level = 2
+                        elif str(level_text).startswith('三'):
+                            level = 3
+                        elif str(level_text).startswith('四'):
+                            level = 4
+                        elif str(level_text).startswith('五'):
+                            level = 5
+                        elif str(level_text).startswith('六'):
+                            level = 6
+                        elif str(level_text).startswith('高等'):
+                            level = 7
+                    
+                    # 仅保留所需四列
+                    grammar_item = {
+                        'level': level,
+                        'project': row['语法项目'] if '语法项目' in grammar_df.columns else '',
+                        'category': row['类别'] if '类别' in grammar_df.columns else '',
+                        'regex': str(regex_text)
+                    }
+                    grammar_data.append(grammar_item)
+            except Exception as e:
+                print(f"加载语法数据出错: {e}")
+        
+        return char_levels, word_levels, grammar_data
     
+    def chengyong_gf0025_readability(self, sentences):
+        """
+        计算程勇基于GF0025标准的汉语二语文本阅读难度
+        
+        公式：难度 = (1/3) * Σ_{n=1..7} n * (r_char(n) + r_word(n) + r_grammar(n))
+        其中 r_*(n) 是第 n 级在该类别中的比例（各类别比例之和为 1）
+        
+        返回：
+            float: 难度值，理论上在 [1, 7] 之间
+        """
+        # 加载GF0025数据
+        if not hasattr(self, 'gf0025_char_levels') or not hasattr(self, 'gf0025_word_levels'):
+            self.gf0025_char_levels, self.gf0025_word_levels, self.gf0025_grammar_data = self._load_gf0025_data()
+        
+        # 初始化各级别计数
+        char_counts = [0] * 7  # 索引0-6对应1-7级
+        word_counts = [0] * 7
+        grammar_counts = [0] * 7
+        
+        # 处理文本 - 合并循环，减少LTP调用次数
+        for sent in sentences:
+            # 处理汉字
+            for char in sent:
+                if char in self.gf0025_char_levels:
+                    level = self.gf0025_char_levels[char]
+                    if 1 <= level <= 7:
+                        char_counts[level-1] += 1
+            
+            # 一次性调用LTP pipeline获取分词、词性和依存关系
+            output = self.ltp.pipeline(sent, tasks=["cws", "pos", "dep"])
+            words = output.cws
+            pos_tags = output.pos
+            deps = output.dep
+            
+            # 处理词汇
+            for word in words:
+                if word in self.gf0025_word_levels:
+                    level = self.gf0025_word_levels[word]
+                    if 1 <= level <= 7:
+                        word_counts[level-1] += 1
+            
+            # 语法难度评估
+            # 注意：完整的语法难度评估需要更复杂的语法分析
+            # 这里我们采用一个简化的方法：
+            # 1. 对于每个句子，我们提取词性，对 GF0025_语法定义中 project 为词类的规则，匹配其具体 category 和 regex
+            # 2. 对于每个句子，我们对整句文本，尝试匹配 project 不是词类的其他规则的 regex
+            # 3. 如果匹配成功，增加相应级别的计数
+            
+            # 1. 匹配词类规则
+            for i, (word, pos) in enumerate(zip(words, pos_tags)):
+                for grammar_rule in self.gf0025_grammar_data:
+                    if grammar_rule['project'] == '词类':
+                        # 根据词类规则的category匹配词性
+                        pos_match = False
+                        category = grammar_rule['category']
+                        if (category == '副词' and pos == 'd') or \
+                           (category == '介词' and pos == 'p') or \
+                           (category == '助词' and pos == 'u') or \
+                           (category == '量词' and pos == 'q') or \
+                           (category == '代词' and pos == 'r') or \
+                           (category == '动词' and pos == 'v') or \
+                           (category == '连词' and pos == 'c') or \
+                           (category == '叹词' and pos == 'e') or \
+                           (category == '数词' and pos == 'm') or \
+                           (category == '形容词' and pos == 'a') or \
+                           (category == '名词' and pos == 'n'):
+                            pos_match = True
+                        
+                        # 如果词性匹配，尝试匹配正则表达式（带异常保护）
+                        if pos_match:
+                            try:
+                                if re.search(grammar_rule['regex'], word):
+                                    level = grammar_rule['level']
+                                    if 1 <= level <= 7:
+                                        grammar_counts[level-1] += 1
+                            except re.error:
+                                # 跳过无效的正则表达式模式
+                                pass
+            
+            # 2. 匹配非词类规则（整句匹配）
+            for grammar_rule in self.gf0025_grammar_data:
+                if grammar_rule['project'] != '词类':
+                    # 对整个句子应用正则表达式（带异常保护）
+                    try:
+                        if re.search(grammar_rule['regex'], sent):
+                            level = grammar_rule['level']
+                            if 1 <= level <= 7:
+                                grammar_counts[level-1] += 1
+                    except re.error:
+                        # 跳过无效的正则表达式模式
+                        pass
+        
+        # 计算各级别比例
+        total_chars = sum(char_counts)
+        total_words = sum(word_counts)
+        total_grammar = sum(grammar_counts)
+        
+        r_char = [count/total_chars if total_chars > 0 else 0 for count in char_counts]
+        r_word = [count/total_words if total_words > 0 else 0 for count in word_counts]
+        r_grammar = [count/total_grammar if total_grammar > 0 else 0 for count in grammar_counts]
+        
+        # 计算难度
+        difficulty = 0
+        for n in range(7):
+            level = n + 1  # 级别从1开始
+            difficulty += level * (r_char[n] + r_word[n] + r_grammar[n])
+        difficulty /= 3.0
+        
+        return difficulty
+
     ## 徐巍可读性指标 = 0.5 * (每个分句的平均字数 + 每个句子中副词和连词的比例)
     ## 这个指标过于简单，几乎就取决于你逗号用得多不多
     def xuwei_readability(self, sentences):
@@ -659,6 +879,11 @@ class ChineseReadability:
         new_chengyong = self.chengyong_readability(new_sentences)
         self._compare_scores(old_chengyong, new_chengyong, "程勇", True)
 
+        # 程勇基于新标准的汉语二语文本阅读难度分级体系
+        old_chengyong_gf0025 = self.chengyong_gf0025_readability(old_sentences)
+        new_chengyong_gf0025 = self.chengyong_gf0025_readability(new_sentences)
+        self._compare_scores(old_chengyong_gf0025, new_chengyong_gf0025, "程勇GF0025", False)
+        
         # 郭望皓可读性指标
         old_guowanghao = self.guowanghao_readability(old_sentences)
         new_guowanghao = self.guowanghao_readability(new_sentences)
