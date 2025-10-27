@@ -386,7 +386,7 @@ class ChineseReadability:
                 next(reader)  # 跳过表头
                 for row in reader:
                     if len(row) >= 2:
-                        char = row[0].strip()
+                        char = row[2].strip()
                         level = row[1].strip()
                         if level.startswith('一'):
                             char_levels[char] = 1
@@ -412,7 +412,7 @@ class ChineseReadability:
                 next(reader)  # 跳过表头
                 for row in reader:
                     if len(row) >= 2:
-                        word = row[0].strip()
+                        word = row[2].strip()
                         level = row[1].strip()
                         if level.startswith('一'):
                             word_levels[word] = 1
@@ -496,8 +496,9 @@ class ChineseReadability:
         for sent in sentences:
             # 处理汉字
             for char in sent:
-                if char in self.gf0025_char_levels:
-                    level = self.gf0025_char_levels[char]
+                # 未收录的汉字视为高等（7级）
+                if char in self.stroke_counts:
+                    level = self.gf0025_char_levels.get(char, 7)
                     if 1 <= level <= 7:
                         char_counts[level-1] += 1
             
@@ -511,8 +512,8 @@ class ChineseReadability:
             for word in words:
                 if word in self.gf0025_word_levels:
                     level = self.gf0025_word_levels[word]
-                    if 1 <= level <= 7:
-                        word_counts[level-1] += 1
+                if 1 <= level <= 7:
+                    word_counts[level-1] += 1
             
             # 语法难度评估
             # 注意：完整的语法难度评估需要更复杂的语法分析
@@ -564,7 +565,7 @@ class ChineseReadability:
                     except re.error:
                         # 跳过无效的正则表达式模式
                         pass
-        
+                    
         # 计算各级别比例
         total_chars = sum(char_counts)
         total_words = sum(word_counts)
