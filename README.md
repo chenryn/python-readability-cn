@@ -1,7 +1,7 @@
 # 中文文本可读性指标 Chinese Readability Score
 
-Evaluate the readability of Chinese text using LTP's word segmentation, part-of-speech analysis, and syntactic dependency analysis capabilities.
-利用LTP分词、词性分析和句法依存分析能力，对中文文本的可读性进行评估。
+Evaluate the readability of Chinese text using word segmentation, part-of-speech analysis, and syntactic dependency analysis capabilities. Supports multiple NLP providers including LTP, Jieba, and PKU.
+利用分词、词性分析和句法依存分析能力，对中文文本的可读性进行评估。支持多种 NLP 提供方，包括 LTP、Jieba 和 PKU。
 
 The code is implemented based on several papers I know, with the scoring metric named after the first author of each paper.
 代码根据我已知的几篇论文分别进行实现，评分指标名称即论文第一作者姓名。
@@ -15,17 +15,37 @@ It's easy using pip, just run:
 $ pip install readability_cn
 ```
 
+Optional NLP providers:
+可选的 NLP 提供方依赖：
+
+```shell
+# Install with Jieba support
+$ pip install readability_cn[jieba]
+
+# Install with PKU support
+$ pip install readability_cn[pkuseg]
+
+# Install with all optional providers
+$ pip install readability_cn[all]
+```
+
 ## Usage
 
 ```python
     import readability_cn
+    from readability_cn.nlp import JiebaNLP, PkuNLP, LtpNLP
 
+    # use LTP as default NLP provider
     readability = ChineseReadability()
+    # or use other NLP providers
+    # readability = ChineseReadability(nlp_provider=JiebaNLP())  # use Jieba
+    # readability = ChineseReadability(nlp_provider=PkuNLP())    # use PKU
+    # readability = ChineseReadability(nlp_provider=LtpNLP())    # explicitly use LTP
+
     # add new custom words
     readability.add_custom_words(['日志易', '优特捷'])
 
     # Compare readability metrics before and after file changes
-    # 对比文件变更前后的可读性指标
     readability.analyze('old.adoc', 'new.adoc')
 
     # use your own preprocess functions
@@ -37,7 +57,7 @@ $ pip install readability_cn
     text = re.sub(r'\n+', '\n', content)
     ... # do other remove and replace here
     sentences = [sentence.strip() for sentence in readability.stnsplit.split(text) if sentence.strip()]
-    readability.wanglei_readability(sentences)
+    readability.chengyong_gf0025_readability(sentences)
 
 ```
 

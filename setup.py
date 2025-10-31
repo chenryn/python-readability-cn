@@ -40,6 +40,11 @@ setup(
         'ltp',
         'torch'
     ],
+    extras_require={
+        'jieba': ['jieba'],
+        'pkuseg': ['pkuseg'],
+        'all': ['jieba', 'pkuseg']
+    },
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.6',

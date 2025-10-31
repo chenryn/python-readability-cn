@@ -7,11 +7,15 @@
 ## Dale Chall Readability Score：0.1579 * (100 * difficult words / words) + 0.0496 * (words / sentences)
 ## Coleman Liau Index：0.0588 * (characters/words) - 0.296 * (sentences/words) - 15.8
 # 参考文献
-# [1]张文雅.基于可读性的信息检索模型研究[D].天津大学,2016.
+# [1]郭望皓.对外汉语文本易读性公式研究[D].上海交通大学,2010.
 # [2]曹颖淑.基于NLP技术的企业信息披露质量的评价方法研究[D].上海师范大学,2018.DOI:10.27312/d.cnki.gshsu.2018.000061.
-# [3]雷蕾,韦瑶瑜,刘康龙.AlphaReadabilityChinese：汉语文本可读性工具开发与应用[J].外语与外语教学,2024,(01):83-93+149.DOI:10.13458/j.cnki.flatt.004997.
+# [3]程勇,董军,晋淑华.基于新标准的汉语二语文本阅读难度分级体系构建与应用[J].世界汉语教学,2023,37(01):98-110.DOI:10.13724/j.cnki.ctiw.2023.01.005.
 # [4]程勇,徐德宽,董军.基于语文教材语料库的文本阅读难度分级关键因素分析与易读性公式研究[J].语言文字应用,2020,(01):132-143.DOI:10.16499/j.cnki.1003-5397.2020.01.014.
 # [5]徐巍,姚振晔,陈冬华.中文年报可读性：衡量与检验[J].会计研究,2021(03):28-44.
+# [6]王蕾.初中级日韩学习者汉语文本可读性公式研究[J].语言教学与研究,2017,(05):15-25.
+# [7]左虹,朱勇.中级欧美留学生汉语文本可读性公式研究[J].世界汉语教学,2014,28(02):263-276.DOI:10.13724/j.cnki.ctiw.2014.02.013.
+# [8]杨金余.高级汉语精读教材语言难度测定研究[D].北京大学,2008.
+
 # 采用LTP库实现分词、词性识别、主谓宾句法依存识别
 # 词性标注集
 # -----------
@@ -87,16 +91,32 @@ import re
 import os
 import sys
 import numpy as np
-import torch
-from ltp import LTP, StnSplit
+from .nlp import LtpNLP
 
 class ChineseReadability:
-    def __init__(self, model_path="LTP/small", use_gpu=True):
-        self.ltp = LTP(model_path)
-        self.stnsplit = StnSplit()
+    def __init__(self, model_path="LTP/small", use_gpu=True, nlp_provider=None):
+        """
+        初始化中文可读性计算器。
 
-        if use_gpu and torch.cuda.is_available():
-            self.ltp.to("cuda")
+        参数：
+        - model_path: 默认 LTP 模型路径，当使用默认提供方时生效
+        - use_gpu: 是否使用 GPU，当使用默认提供方时生效
+        - nlp_provider: 可注入的 NLP 提供方实例，需实现：
+            * pipeline(sentence, tasks)
+            * add_words(words, freq)
+            * stnsplit(具备 .split(text) 方法) 或 split_sentences(text)
+        """
+        # NLP 封装，默认使用 LTP 的实现；支持注入自定义提供方
+        self.nlp = nlp_provider or LtpNLP(model_path, use_gpu=use_gpu)
+        # 保持现有 API：暴露 stnsplit 以兼容外部使用；若无 stnsplit，则用适配器包装 split_sentences
+        if hasattr(self.nlp, 'stnsplit') and hasattr(self.nlp.stnsplit, 'split'):
+            self.stnsplit = self.nlp.stnsplit
+        elif hasattr(self.nlp, 'split_sentences'):
+            adapter = type('SplitAdapter', (), {})()
+            adapter.split = self.nlp.split_sentences
+            self.stnsplit = adapter
+        else:
+            raise ValueError('nlp_provider must provide either stnsplit.split(text) or split_sentences(text)')
 
         self.hsk3_vocab = self._load_hsk3_vocab()
         self.stroke_counts = self._load_stroke_counts()
@@ -111,15 +131,8 @@ class ChineseReadability:
         :param words: A list of words or a dictionary of words with their frequencies.
         :param freq: Default frequency for words if a list is provided.
         """
-        if isinstance(words, list):
-            words_dict = {word: freq for word in words}
-        elif isinstance(words, dict):
-            words_dict = words
-        else:
-            raise ValueError("Words should be a list or a dictionary.")
-
-        for word, freq in words_dict.items():
-            self.ltp.add_words([word], freq=freq)
+        # 委托给 NLP 封装以便未来替换实现
+        self.nlp.add_words(words, freq=freq)
 
     def _load_hsk3_vocab(self):
         with open(os.path.join(os.path.dirname(__file__), 'data/hsk3_vocabulary.txt'), 'r', encoding='utf-8') as f:
@@ -294,6 +307,9 @@ class ChineseReadability:
     ## 程勇难度指标 = 38.36 - 45.65 * 平均字频(邢红兵25亿字语料字频表) + 54.92 * 连词比例 - 8.96 * 物词义类比例 + 11.13 * 词义丰富度 - 12.34 * 动作词义类比例 + 0.012 * 句长变化度 + 20 * 关联词义类比例
     ## 取值范围: [15, 140]
     ## 假设句长变化度最大值为 1000，字频最大值为 15000
+    ## Cheng Yong Difficulty Index = 38.36 - 45.65 * avg_char_freq(Xing Hongbing 2.5B corpus) + 54.92 * conj_ratio - 8.96 * object_sem_ratio + 11.13 * semantic_richness - 12.34 * action_sem_ratio + 0.012 * sent_len_variance + 20 * rel_sem_ratio
+    ## Range: [15, 140]
+    ## Assume max sent_len_variance = 1000, max char_freq = 15000
     def chengyong_readability(self, sentences):
         # Calculate sentence length variance
         sentence_lengths = [len(sent) for sent in sentences]
@@ -307,7 +323,7 @@ class ChineseReadability:
         char_count = 0
         
         for sent in sentences:
-            output = self.ltp.pipeline(sent, tasks=["cws", "pos", "dep"])
+            output = self.nlp.pipeline(sent, tasks=["cws", "pos", "dep"])
             words.extend(output.cws)
             pos_tags.extend(output.pos)
             deps.extend(output.dep)
@@ -368,6 +384,11 @@ class ChineseReadability:
     ## - 其中 r_*(n) 是第 n 级在该类别中的比例（各类别比例之和为 1）
     ## 新标准即 GF0025，data/下分别存储了字、词、语法的 csv 文件
     ## 一级1-1.4，二级1.4-1.75，三级1.75-2.0，四级2.0-2.3，五级2.3-2.55，六级2.55-2.7，七级2.7-7.0
+    ## Cheng Yong's Chinese Text Reading Difficulty Grading System Based on New Standards
+    ## - Formula: Difficulty = (1/3) * Σ_{n=1..7} n * (r_char(n) + r_word(n) + r_grammar(n))
+    ## - Where r_*(n) is the proportion of level n in each category (sum of proportions in each category equals  1)
+    ## The new standard is GF0025, with separate CSV files for characters, words, and grammar stored in data/
+    ## Level 1: 1-1.4, Level 2: 1.4-1.75, Level 3: 1.75-2.0, Level 4: 2.0-2.3, Level 5: 2.3-2.55, Level 6: 2.55-2.7, Level 7: 2.7-7.0
     def _load_gf0025_data(self):
         """加载GF0025标准的汉字、词汇和语法数据"""
         import os
@@ -503,7 +524,7 @@ class ChineseReadability:
                         char_counts[level-1] += 1
             
             # 一次性调用LTP pipeline获取分词、词性和依存关系
-            output = self.ltp.pipeline(sent, tasks=["cws", "pos", "dep"])
+            output = self.nlp.pipeline(sent, tasks=["cws", "pos", "dep"])
             words = output.cws
             pos_tags = output.pos
             deps = output.dep
@@ -586,6 +607,8 @@ class ChineseReadability:
 
     ## 徐巍可读性指标 = 0.5 * (每个分句的平均字数 + 每个句子中副词和连词的比例)
     ## 这个指标过于简单，几乎就取决于你逗号用得多不多
+    ## Xu Wei Readability Index = 0.5 * (average characters per clause + ratio of adverbs and conjunctions per sentence)
+    ## This index is overly simplistic and largely depends on how many commas you use
     def xuwei_readability(self, sentences):
         zi_num_per_clause = []
         adv_conj_ratio_per_sent = []
@@ -594,7 +617,7 @@ class ChineseReadability:
             for clause in clauses:
                 zi_num_per_clause.append(len(clause))
             
-            words = self.ltp.pipeline(sent, tasks=["cws", "pos"])
+            words = self.nlp.pipeline(sent, tasks=["cws", "pos"])
             total_words = len(words.cws)
             adv_conj_num = sum(1 for pos in words.pos if pos in ['c', 'd'])
             adv_conj_ratio = adv_conj_num / total_words if total_words > 0 else 0
@@ -608,13 +631,16 @@ class ChineseReadability:
     ## 孙汉银中学生阅读难度指标 = -11.848 + 2.135 * 平均笔画数 + 0.15 * 句均字数 + 7.117 * 非hsk三级词比例 + 0.164 * 句均词数
     ## 取值范围: [-8.5, 63]
     ## 假设一般情况下，汉字笔画数在 1-30 之间，句子长度在 5-50 个字之间，3-20 个词之间
+    ## Sun Hanyin Middle-School Reading Difficulty = -11.848 + 2.135 * avg_strokes + 0.15 * avg_chars_per_sentence + 7.117 * non_hsk3_ratio + 0.164 * avg_words_per_sentence
+    ## Range: [-8.5, 63]
+    ## Assumptions: stroke count 1-30, sentence length 5-50 chars, 3-20 words per sentence
     def sunhanyin_readability(self, sentences):
         total_strokes = 0
         total_chars = 0
         total_words = 0
         non_hsk3_words = 0
         for sent in sentences:
-            words = self.ltp.pipeline(sent, tasks=["cws"]).cws
+            words = self.nlp.pipeline(sent, tasks=["cws"]).cws
             total_words += len(words)
             
             for word in words:
@@ -634,6 +660,8 @@ class ChineseReadability:
     
     ## 王蕾日韩留学生汉语可读性指标 = 72.749 - 7.515 * 虚词(介词、连词、助词、叹词)数 + 0.802 * 简单词数 - 0.462 * 总词数 + 2.446 * 分句数
     ## 注意：虚词里没算副词，分句包括逗号冒号，因此这个公式的计算结果抖动较大。
+    ## Wang Lei's readability index for Chinese texts targeting Japanese and Korean learners = 72.749 - 7.515 * (function-word count: prepositions, conjunctions, particles, interjections) + 0.802 * simple-word count - 0.462 * total-word count + 2.446 * clause count
+    ## Note: adverbs are excluded from function words; clauses include commas/colons, so scores fluctuate.
     def wanglei_readability(self, sentences):
         # Count variables
         function_words = set()
@@ -649,7 +677,7 @@ class ChineseReadability:
             # Count sub-sentences based on commas, semicolons, and colons
             sub_sentence_count = sent.count('，') + sent.count('；') + sent.count('：')
             sentence_count += sub_sentence_count
-            output = self.ltp.pipeline(sent, tasks=["cws", "pos"])
+            output = self.nlp.pipeline(sent, tasks=["cws", "pos"])
             words = output.cws
             pos_tags = output.pos
             total_words.update(words)
@@ -667,6 +695,9 @@ class ChineseReadability:
     ## 曹颖淑三因素可读性指标 = 14.95961 + 1.11506 * 包含主谓宾的完整句比例 + 39.07746 * 《汉语三级考试》基础词汇比例 - 2.48491 * 平均笔画数
     ## 曹颖淑七因素可读性指标 = 13.90963 + 1.54461 * 包含主谓宾的完整句比例 + 39.01497 * 《汉语三级考试》基础词汇比例 - 2.52206 * 平均笔画数 + 0.29809 * 笔画数为5的字符比例 + 0.36192 * 笔画数为12的字符比例 + 0.99363 * 笔画数为22的字符比例 - 1.64671 * 笔画数为25的字符比例
     ## 取值范围: [-60, 50]
+    ## Cao Yinshu 3-factor readability index = 14.95961 + 1.11506 * ratio of complete SVO sentences + 39.07746 * ratio of HSK3 basic vocabulary - 2.48491 * average stroke count
+    ## Cao Yinshu 7-factor readability index = 13.90963 + 1.54461 * ratio of complete SVO sentences + 39.01497 * ratio of HSK3 basic vocabulary - 2.52206 * average stroke count + 0.29809 * ratio of 5-stroke characters + 0.36192 * ratio of 12-stroke characters + 0.99363 * ratio of 22-stroke characters - 1.64671 * ratio of 25-stroke characters
+    ## Range: [-60, 50]
     def caoyinshu_readability(self, sentences):
         total_sentences = len(sentences)
         complete_sentences = 0
@@ -681,7 +712,7 @@ class ChineseReadability:
         
         for sent in sentences:
             # Check for subject-predicate-object structure
-            output = self.ltp.pipeline(sent, tasks=["cws", "dep"])
+            output = self.nlp.pipeline(sent, tasks=["cws", "dep"])
             if any(rel == 'SBV' for rel in output.dep) and any(rel == 'VOB' for rel in output.dep):
                 complete_sentences += 1
             total_words += len(output.cws)
@@ -719,9 +750,13 @@ class ChineseReadability:
         return readability_three, readability_seven
     
     ## 郭望皓对外汉语难度指标 = -11.946 + 0.198 * 汉字难度 + 0.123 * 平均句长 + 0.811 * 词汇难度
-    ## 《汉语水平词汇与汉字等级大纲》的甲、乙、丙、丁、超纲字/词数占比
+    ## 字词难度计算来自《汉语水平词汇与汉字等级大纲》的甲、乙、丙、丁、超纲字/词数占比
     ## 汉字难度 = 0.148A + 0.182B + 0.137C + 0.215D + 0.283E
     ## 词汇难度 = 0.132A + 0.185B + 0.249C + 0.246D + 0.188E
+    ## Guo Wanghao TCFL Difficulty Index = -11.946 + 0.198 * char_difficulty + 0.123 * avg_sentence_length + 0.811 * vocab_difficulty
+    ## Character/vocabulary difficulty is calculated based on the proportion of Level-A/B/C/D/Out-of-syllabus characters/words in "Chinese Proficiency Vocabulary & Character Grading Outline"
+    ## Character difficulty = 0.148A + 0.182B + 0.137C + 0.215D + 0.283E
+    ## Vocabulary difficulty = 0.132A + 0.185B + 0.249C + 0.246D + 0.188E
     def guowanghao_readability(self, sentences):
         # Lazy-load level wordlists for 乙/丙/丁
         if not hasattr(self, 'yi_words'):
@@ -747,7 +782,7 @@ class ChineseReadability:
 
         for sent in sentences:
             # 分词
-            output = self.ltp.pipeline(sent, tasks=["cws"])
+            output = self.nlp.pipeline(sent, tasks=["cws"])
             words = output.cws
             total_words += len(words)
 
@@ -807,6 +842,9 @@ class ChineseReadability:
     ## 左虹欧美留学生难度指标 =  23.646 + 0.485 * 汉字水平大纲常用甲级字数 - 125.931 * 非甲乙级词数占比 - 0.647 * 虚词(介词、连词、助词、叹词、副词、方位词)数
     ## 杨金余高级汉语精读教材研究中指出：平均每百字的难字为 3-7 个，平均每百字的难词为 10-20 个，平均每百字的固定成语词组数不超过 2 个，平均每百字的丙级以上句法项目不超过 1 个。全文 1000-3000 字，平均每句 20-40 字。
     ## 左虹研究中每篇文章的平均长度是 145 个汉字，和杨金余研究有明显差异。因此请区分测试内容的长短差异，选用不同的指标。
+    ## Zuohong Difficulty Index for European and American Students = 23.646 + 0.485 * count of Jia-level frequent characters - 125.931 * ratio of non-Jia-level words - 0.647 * count of function words (prepositions, conjunctions, particles, interjections, adverbs, and directional nouns)
+    ## Yang Jinyu's study on advanced Chinese intensive-reading textbooks: on average 3–7 difficult characters per 100 characters, 10–20 difficult words per 100 characters, no more than 2 fixed idioms per 100 characters, and no more than 1 syntactic item above level-C per 100 characters. Full text length 1000–3000 characters, average sentence length 20–40 characters.
+    ## In Zuohong's study the average article length is 145 characters, which differs significantly from Yang Jinyu's study; therefore, choose the appropriate index according to the length of the test content.
     def zuohong_readability(self, sentences):
         total_chars = 0
         jia_chars_count = 0
@@ -816,7 +854,7 @@ class ChineseReadability:
     
         for sent in sentences:
             # Process each sentence
-            output = self.ltp.pipeline(sent, tasks=["cws", "pos"])
+            output = self.nlp.pipeline(sent, tasks=["cws", "pos"])
             words = output.cws
             pos_tags = output.pos
     
