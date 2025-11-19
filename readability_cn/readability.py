@@ -533,9 +533,9 @@ class ChineseReadability:
             for word in words:
                 if word in self.gf0025_word_levels:
                     level = self.gf0025_word_levels[word]
-                if 1 <= level <= 7:
-                    word_counts[level-1] += 1
-            
+                    if 1 <= level <= 7:
+                        word_counts[level-1] += 1
+                
             # 语法难度评估
             # 注意：完整的语法难度评估需要更复杂的语法分析
             # 这里我们采用一个简化的方法：
@@ -961,4 +961,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
